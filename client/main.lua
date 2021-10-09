@@ -109,6 +109,7 @@ CreateThread(function()
                                     if result == false then                                        
                                         SetVehicleDoorsLocked(entering, 1)
                                         hotwired = false
+                                        HasKey = false
                                     else
                                         HasKey = true
                                     end
