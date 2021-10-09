@@ -6,6 +6,7 @@ local isLoggedIn = false
 local AlertSend = false
 local lockpicked = false
 local lockpickedPlate = nil
+local hotwired = false
 
 -- Events
 
@@ -46,11 +47,14 @@ AddEventHandler('vehiclekeys:client:GiveKeys', function(target)
     TriggerServerEvent('vehiclekeys:server:GiveVehicleKeys', plate, target)
 end)
 
+-- Switched logic from looking for key to checking for ownership
+-- Makes sense if they got ownership through hotwiring they can toggle it
 RegisterNetEvent('vehiclekeys:client:ToggleEngine')
 AddEventHandler('vehiclekeys:client:ToggleEngine', function()
     local EngineOn = IsVehicleEngineOn(GetVehiclePedIsIn(PlayerPedId()))
     local veh = GetVehiclePedIsIn(PlayerPedId(), true)
-    if HasKey then
+
+    if HasKey or hotwired then 
         if EngineOn then
             SetVehicleEngineOn(veh, false, false, true)
         else
@@ -83,24 +87,28 @@ CreateThread(function()
                     if not result then -- if not player owned
                         local driver = GetPedInVehicleSeat(entering, -1)
                         if driver ~= 0 and not IsPedAPlayer(driver) then
-                            if Config.Rob then
+                            if Config.Rob then -- Takes keys from dead local in car
                                 if IsEntityDead(driver) then
                                     TriggerEvent("vehiclekeys:client:SetOwner", plate)
-                                    SetVehicleDoorsLocked(entering, 1)
-                                    HasKey = true
-                                else
-                                    SetVehicleDoorsLocked(entering, 2)
+                                    SetVehicleDoorsLocked(entering, 1)  -- Sets doors to unlocked
+                                    HasKey = true   -- Gives keys to player
+                                else    -- Logic for stealing car with living local driver
+                                    SetVehicleDoorsLocked(entering, 1)  -- Ensures local vehicles are unlocked
+                                    SetVehicleEngineOn(entering, 0, 1, 1)   -- Turns engine off immediately to force either lockpick or hotwire
+                                    HasKey = false  -- Ensures player doesn't have key from car they're stealing
+                                    hotwired = false
                                 end
-                            else
+                            else    -- This code isn't used if Config.Rob is set to True
                                 TriggerEvent("vehiclekeys:client:SetOwner", plate)
                                 SetVehicleDoorsLocked(entering, 1)
                                 HasKey = true
                             end
-                        else
+                        else     -- Logic for parked local vehicles
                             if not lockpicked and lockpickedPlate ~= plate then
                                 QBCore.Functions.TriggerCallback('vehiclekeys:CheckHasKey', function(result)
-                                    if result == false then
-                                        SetVehicleDoorsLocked(entering, 2)
+                                    if result == false then                                        
+                                        SetVehicleDoorsLocked(entering, 1)
+                                        hotwired = false
                                     else
                                         HasKey = true
                                     end
@@ -111,7 +119,9 @@ CreateThread(function()
                 end, plate)
             end
 
-            if IsPedInAnyVehicle(ped, false) and lockpicked and not IsHotwiring and not HasKey then
+            -- if IsPedInAnyVehicle(ped, false) and lockpicked and not IsHotwiring and not HasKey then
+            -- Removed requirement to lockpick car prior to hotwiring
+            if IsPedInAnyVehicle(ped, false) and not IsHotwiring and not HasKey and not hotwired then
                 sleep = 7
                 local veh = GetVehiclePedIsIn(ped)
                 local vehpos = GetEntityCoords(veh)
@@ -124,6 +134,7 @@ CreateThread(function()
                 end
             end
 
+            -- Robbing logic
             if Config.Rob then
                 if not IsRobbing then
                     local playerid = PlayerId()
@@ -137,6 +148,7 @@ CreateThread(function()
                                         local pos = GetEntityCoords(ped, true)
                                         local targetpos = GetEntityCoords(target, true)
                                         if #(pos - targetpos) < 5.0 then
+                                            SetVehicleCanBeUsedByFleeingPeds(targetveh, false)  -- Ensures ped won't exit vehicle, then get back in and drive off
                                             RobVehicle(target)
                                         end
                                     end
@@ -275,7 +287,8 @@ function Hotwire()
         local vehicle = GetVehiclePedIsIn(ped, true)
         IsHotwiring = true
         lockpickedPlate = nil
-        local hotwireTime = math.random(20000, 40000)
+        -- local hotwireTime = math.random(20000, 40000)
+        local hotwireTime = 2000
         SetVehicleAlarm(vehicle, true)
         SetVehicleAlarmTimeLeft(vehicle, hotwireTime)
         PoliceCall()
@@ -293,17 +306,19 @@ function Hotwire()
             if (math.random() <= Config.HotwireChance) then
                 lockpicked = false
                 TriggerServerEvent('hud:server:GainStress', math.random(1, 4))
-                TriggerEvent('vehiclekeys:client:SetOwner', GetVehicleNumberPlateText(vehicle))
+                -- TriggerEvent('vehiclekeys:client:SetOwner', GetVehicleNumberPlateText(vehicle))  -- Gives players keys when hotwire is complete - doesn't make sense
+                hotwired = true
+                SetVehicleEngineOn(vehicle, true, false, false)
                 QBCore.Functions.Notify("Hotwire succeeded!")
             else
-                SetVehicleEngineOn(veh, false, false, true)
+                SetVehicleEngineOn(vehicle, false, false, true)
                 TriggerServerEvent('hud:server:GainStress', math.random(1, 4))
                 QBCore.Functions.Notify("Hotwire failed!", "error")
             end
             IsHotwiring = false
         end, function() -- Cancel
             StopAnimTask(ped, "anim@amb@clubhouse@tutorial@bkr_tut_ig3@", "machinic_loop_mechandplayer", 1.0)
-            SetVehicleEngineOn(veh, false, false, true)
+            SetVehicleEngineOn(vehicle, false, false, true)
             QBCore.Functions.Notify("Hotwire failed!", "error")
             IsHotwiring = false
         end)
